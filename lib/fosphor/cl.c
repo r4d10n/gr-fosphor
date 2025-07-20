@@ -419,7 +419,7 @@ cl_queue_clear_buffers(struct fosphor *self)
 		cl->mem_spectrum,
 		&noise_floor, sizeof(float),
 		0,
-		2 * 2 * sizeof(cl_float) * FOSPHOR_FFT_LEN,
+		2 * 2 * sizeof(cl_float) * self->fft_len,
 		0, NULL, NULL
 	);
 	CL_ERR_CHECK(err, "Unable to queue clear of spectrum buffer");
@@ -427,7 +427,7 @@ cl_queue_clear_buffers(struct fosphor *self)
 	/* Init the waterfall image to noise floor */
 	color[0] = noise_floor;
 
-	img_region[0] = FOSPHOR_FFT_LEN;
+	img_region[0] = self->fft_len;
 	img_region[1] = 1024;
 	img_region[2] = 1;
 
@@ -442,7 +442,7 @@ cl_queue_clear_buffers(struct fosphor *self)
 	/* Init the histogram image to all 0.0f values */
 	color[0] = 0.0f;
 
-	img_region[0] = FOSPHOR_FFT_LEN;
+	img_region[0] = self->fft_len;
 	img_region[1] = 128;
 	img_region[2] = 1;
 
@@ -515,7 +515,7 @@ cl_init_buffers_nogl(struct fosphor *self)
 	img_fmt.image_channel_data_type = CL_FLOAT;
 
 	img_desc.image_type = CL_MEM_OBJECT_IMAGE2D;
-	img_desc.image_width = FOSPHOR_FFT_LEN;
+	img_desc.image_width = self->fft_len;
 	img_desc.image_depth = 0;
 	img_desc.image_array_size = 0;
 	img_desc.image_row_pitch = 0;
@@ -554,7 +554,7 @@ cl_init_buffers_nogl(struct fosphor *self)
 	cl->mem_spectrum = clCreateBuffer(
 		cl->ctx,
 		CL_MEM_READ_WRITE,
-		2 * 2 * sizeof(cl_float) * FOSPHOR_FFT_LEN,
+		2 * 2 * sizeof(cl_float) * self->fft_len,
 		NULL,
 		&err
 	);
@@ -648,7 +648,7 @@ cl_do_init(struct fosphor *self)
 	/* FFT buffers */
 	cl->mem_fft_in = clCreateBuffer(cl->ctx,
 		CL_MEM_READ_ONLY,
-		2 * sizeof(cl_float) * FOSPHOR_FFT_LEN * FOSPHOR_FFT_MAX_BATCH,
+		2 * sizeof(cl_float) * self->fft_len * FOSPHOR_FFT_MAX_BATCH,
 		NULL,
 		&err
 	);
@@ -656,7 +656,7 @@ cl_do_init(struct fosphor *self)
 
 	cl->mem_fft_out = clCreateBuffer(cl->ctx,
 		CL_MEM_READ_WRITE,
-		2 * sizeof(cl_float) * FOSPHOR_FFT_LEN * FOSPHOR_FFT_MAX_BATCH,
+		2 * sizeof(cl_float) * self->fft_len * FOSPHOR_FFT_MAX_BATCH,
 		NULL,
 		&err
 	);
@@ -664,7 +664,7 @@ cl_do_init(struct fosphor *self)
 
 	cl->mem_fft_win = clCreateBuffer(cl->ctx,
 		CL_MEM_READ_ONLY,
-		2 * sizeof(cl_float) * FOSPHOR_FFT_LEN,
+		2 * sizeof(cl_float) * self->fft_len,
 		NULL,
 		&err
 	);
@@ -675,7 +675,9 @@ cl_do_init(struct fosphor *self)
 	if (!cl->prog_fft)
 		goto error;
 
-	cl->kern_fft = clCreateKernel(cl->prog_fft, "fft1D_1024", &err);
+	char kernel_name[32];
+	snprintf(kernel_name, sizeof(kernel_name), "fft1D_%d", self->fft_len);
+	cl->kern_fft = clCreateKernel(cl->prog_fft, kernel_name, &err);
 	CL_ERR_CHECK(err, "Unable to create FFT kernel");
 
 	/* Configure static FFT kernel args */
@@ -710,7 +712,7 @@ cl_do_init(struct fosphor *self)
 	CL_ERR_CHECK(err, "Unable to create display kernel");
 
 	/* Configure static display kernel args */
-	cl_uint fft_log2_len = FOSPHOR_FFT_LEN_LOG;
+	cl_uint fft_log2_len = fosphor_fft_len_log_get();
 	cl_float histo_t0r   = 16.0f;
 	cl_float histo_t0d   = 1024.0f;
 	cl_float live_alpha  = 0.002f;
@@ -876,13 +878,13 @@ fosphor_cl_process(struct fosphor *self,
 	cl_int err;
 	int locked = 0;
 	size_t local[2], global[2];
-	int n_spectra = len / FOSPHOR_FFT_LEN;
+	int n_spectra = len / self->fft_len;
 
 	/* Validate batch size */
-	if (len & ((FOSPHOR_FFT_MULT_BATCH*FOSPHOR_FFT_LEN)-1))
+	if (len & ((FOSPHOR_FFT_MULT_BATCH*self->fft_len)-1))
 		return -EINVAL;
 
-	if (len > (FOSPHOR_FFT_LEN * FOSPHOR_FFT_MAX_BATCH))
+	if (len > (self->fft_len * FOSPHOR_FFT_MAX_BATCH))
 		return -EINVAL;
 
 	/* Copy new window if needed */
@@ -891,7 +893,7 @@ fosphor_cl_process(struct fosphor *self,
 			cl->cq,
 			cl->mem_fft_win,
 			CL_FALSE,
-			0, sizeof(cl_float) * FOSPHOR_FFT_LEN, cl->fft_win,
+			0, sizeof(cl_float) * self->fft_len, cl->fft_win,
 			0, NULL, NULL
 		);
 		CL_ERR_CHECK(err, "Unable to copy data to FFT window buffer");
@@ -909,12 +911,20 @@ fosphor_cl_process(struct fosphor *self,
 	);
 	CL_ERR_CHECK(err, "Unable to copy data to FFT input buffer");
 
-	/* Execute FFT kernel */
-	global[0] = FOSPHOR_FFT_LEN / 8;
-	global[1] = n_spectra;
-
-	local[0] = global[0];
-	local[1] = 1;
+	/* Execute FFT kernel with appropriate work group size */
+	if (self->fft_len <= 4096) {
+		/* Original design for smaller FFTs */
+		global[0] = self->fft_len / 8;
+		global[1] = n_spectra;
+		local[0] = global[0];
+		local[1] = 1;
+	} else {
+		/* Memory-optimized design for larger FFTs */
+		global[0] = 64;  /* Fixed workgroup size for large kernels */
+		global[1] = n_spectra;
+		local[0] = 64;
+		local[1] = 1;
+	}
 
 	err = clEnqueueNDRangeKernel(cl->cq, cl->kern_fft, 2, NULL, global, local, 0, NULL, NULL);
 	CL_ERR_CHECK(err, "Unable to queue FFT kernel execution");
@@ -942,7 +952,7 @@ fosphor_cl_process(struct fosphor *self,
 	CL_ERR_CHECK(err, "Unable to configure display kernel");
 
 	/* Execute display kernel */
-	global[0] = FOSPHOR_FFT_LEN;
+	global[0] = self->fft_len;
 	global[1] = 16;
 	local[0] = 16;
 	local[1] = 16;
@@ -1041,7 +1051,7 @@ fosphor_cl_finish(struct fosphor *self)
 			cl->mem_spectrum,
 			CL_FALSE,
 			0,
-			2 * 2 * sizeof(cl_float) * FOSPHOR_FFT_LEN,
+			2 * 2 * sizeof(cl_float) * self->fft_len,
 			self->buf_spectrum,
 			0, NULL, NULL
 		);

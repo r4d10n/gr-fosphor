@@ -196,7 +196,7 @@ gl_deferred_init(struct fosphor *self)
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
 
-	glTexImage2D(GL_TEXTURE_2D, 0, tex_fmt, FOSPHOR_FFT_LEN, 1024, 0, GL_RED, GL_FLOAT, NULL);
+	glTexImage2D(GL_TEXTURE_2D, 0, tex_fmt, self->fft_len, 1024, 0, GL_RED, GL_FLOAT, NULL);
 
 	/* Histogram texture (FFT_LEN * 128) */
 	glGenTextures(1, &gl->tex_histogram);
@@ -208,14 +208,14 @@ gl_deferred_init(struct fosphor *self)
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
-	glTexImage2D(GL_TEXTURE_2D, 0, tex_fmt, FOSPHOR_FFT_LEN, 128, 0, GL_RED, GL_FLOAT, NULL);
+	glTexImage2D(GL_TEXTURE_2D, 0, tex_fmt, self->fft_len, 128, 0, GL_RED, GL_FLOAT, NULL);
 
 	/* Spectrum VBO (2 * FFT_LEN, half for live, half for 'hold') */
 	glGenBuffers(1, &gl->vbo_spectrum);
 
 	glBindBuffer(GL_ARRAY_BUFFER, gl->vbo_spectrum);
 
-	len = 2 * sizeof(float) * 2 * FOSPHOR_FFT_LEN;
+	len = 2 * sizeof(float) * 2 * self->fft_len;
 	glBufferData(GL_ARRAY_BUFFER, len, NULL, GL_DYNAMIC_DRAW);
 }
 
@@ -344,9 +344,9 @@ fosphor_gl_refresh(struct fosphor *self)
 
 	gl_deferred_init(self);
 
-	gl_tex2d_write(gl->tex_waterfall, self->img_waterfall, FOSPHOR_FFT_LEN, 1024);
-	gl_tex2d_write(gl->tex_histogram, self->img_histogram, FOSPHOR_FFT_LEN,  128);
-	gl_vbo_write(gl->vbo_spectrum, self->buf_spectrum, 2 * 2 * sizeof(float) * FOSPHOR_FFT_LEN);
+	gl_tex2d_write(gl->tex_waterfall, self->img_waterfall, self->fft_len, 1024);
+	gl_tex2d_write(gl->tex_histogram, self->img_histogram, self->fft_len,  128);
+	gl_vbo_write(gl->vbo_spectrum, self->buf_spectrum, 2 * 2 * sizeof(float) * self->fft_len);
 }
 
 
@@ -360,7 +360,7 @@ fosphor_gl_draw(struct fosphor *self, struct fosphor_render *render)
 	int i;
 
 	/* Utils */
-	tw = 1.0f / (float)(FOSPHOR_FFT_LEN);	/* Texel width */
+	tw = 1.0f / (float)(self->fft_len);	/* Texel width */
 
 	/* Texture mapping notes:
 	 *
@@ -474,13 +474,13 @@ fosphor_gl_draw(struct fosphor *self, struct fosphor_render *render)
 		int idx[2], len;
 
 		/* Select end-points */
-		idx[0] = ceilf ((float)(FOSPHOR_FFT_LEN) * (render->freq_center - (render->freq_span / 2.0f)));
-		idx[1] = floorf((float)(FOSPHOR_FFT_LEN) * (render->freq_center + (render->freq_span / 2.0f)));
+		idx[0] = ceilf ((float)(self->fft_len) * (render->freq_center - (render->freq_span / 2.0f)));
+		idx[1] = floorf((float)(self->fft_len) * (render->freq_center + (render->freq_span / 2.0f)));
 
 		if (idx[0] < 1)
 			idx[0] = 1;
-		if (idx[1] >= FOSPHOR_FFT_LEN)
-			idx[1] = FOSPHOR_FFT_LEN - 1;
+		if (idx[1] >= self->fft_len)
+			idx[1] = self->fft_len - 1;
 
 		len = idx[1] - idx[0] + 1;
 
@@ -541,7 +541,7 @@ fosphor_gl_draw(struct fosphor *self, struct fosphor_render *render)
 			glColor4f(1.0f, 0.0f, 0.0f, 0.75f);
 
 			glEnableClientState(GL_VERTEX_ARRAY);
-			glDrawArrays(GL_LINE_STRIP, idx[0] + FOSPHOR_FFT_LEN, len);
+			glDrawArrays(GL_LINE_STRIP, idx[0] + self->fft_len, len);
 			glDisableClientState(GL_VERTEX_ARRAY);
 		}
 

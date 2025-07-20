@@ -33,6 +33,12 @@ void fosphor_set_fft_window_default(struct fosphor *self);
 void fosphor_set_fft_window(struct fosphor *self, float *win);
 
 void fosphor_set_power_range(struct fosphor *self, int db_ref, int db_per_div);
+
+/* FFT Length Management */
+int  fosphor_fft_len_log_get(void);
+int  fosphor_fft_len_get(void);
+void fosphor_fft_len_set(int len);
+int  fosphor_fft_len_validate(int len);
 void fosphor_set_frequency_range(struct fosphor *self,
                                  double center, double span);
 

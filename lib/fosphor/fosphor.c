@@ -25,6 +25,9 @@
 #include "fosphor.h"
 #include "private.h"
 
+static int g_fosphor_fft_len = FOSPHOR_FFT_LEN_DEFAULT;
+static int g_fosphor_fft_len_log = FOSPHOR_FFT_LEN_LOG_DEFAULT;
+
 
 struct fosphor *
 fosphor_init(void)
@@ -39,6 +42,9 @@ fosphor_init(void)
 
 	memset(self, 0, sizeof(struct fosphor));
 
+	/* Set default FFT length */
+	self->fft_len = g_fosphor_fft_len;
+
 	/* Init GL/CL sub-states */
 	rv = fosphor_gl_init(self);
 	if (rv)
@@ -48,12 +54,17 @@ fosphor_init(void)
 	if (rv)
 		goto error;
 
+	/* Allocate FFT window */
+	self->fft_win = malloc(self->fft_len * sizeof(float));
+	if (!self->fft_win)
+		goto error;
+
 	/* Buffers (if needed) */
 	if (!(self->flags & FLG_FOSPHOR_USE_CLGL_SHARING))
 	{
-		self->img_waterfall = malloc(FOSPHOR_FFT_LEN * 1024 * sizeof(float));
-		self->img_histogram = malloc(FOSPHOR_FFT_LEN *  128 * sizeof(float));
-		self->buf_spectrum  = malloc(2 * 2 * FOSPHOR_FFT_LEN * sizeof(float));
+		self->img_waterfall = malloc(self->fft_len * 1024 * sizeof(float));
+		self->img_histogram = malloc(self->fft_len *  128 * sizeof(float));
+		self->buf_spectrum  = malloc(2 * 2 * self->fft_len * sizeof(float));
 
 		if (!self->img_waterfall ||
 		    !self->img_histogram ||
@@ -79,6 +90,7 @@ fosphor_release(struct fosphor *self)
 	if (!self)
 		return;
 
+	free(self->fft_win);
 	free(self->img_waterfall);
 	free(self->img_histogram);
 	free(self->buf_spectrum);
@@ -111,8 +123,8 @@ fosphor_set_fft_window_default(struct fosphor *self)
 	int i;
 
 	/* Default Hamming window (periodic) */
-	for (i=0; i<FOSPHOR_FFT_LEN; i++) {
-		float ft = (float)FOSPHOR_FFT_LEN;
+	for (i=0; i<self->fft_len; i++) {
+		float ft = (float)self->fft_len;
 		float fp = (float)i;
 		self->fft_win[i] = (0.54f - 0.46f * cosf((2.0f * 3.141592f * fp) / ft)) * 1.855f;
 	}
@@ -123,7 +135,7 @@ fosphor_set_fft_window_default(struct fosphor *self)
 void
 fosphor_set_fft_window(struct fosphor *self, float *win)
 {
-	memcpy(self->fft_win, win, sizeof(float) * FOSPHOR_FFT_LEN);
+	memcpy(self->fft_win, win, sizeof(float) * self->fft_len);
 	fosphor_cl_load_fft_window(self, self->fft_win);
 }
 
@@ -138,7 +150,7 @@ fosphor_set_power_range(struct fosphor *self, int db_ref, int db_per_div)
 	db0 = db_ref - 10*db_per_div;
 	db1 = db_ref;
 
-	k = log10f((float)FOSPHOR_FFT_LEN);
+	k = log10f((float)self->fft_len);
 
 	offset = - ( k + ((float)db0 / 20.0f) );
 	scale  = 20.0f / (float)(db1 - db0);
@@ -323,7 +335,7 @@ fosphor_pos2samp(struct fosphor *self, struct fosphor_render *render, int y)
 	float ys = render->_y_wf[1] - render->_y_wf[0] - 1.0f;
 	float yr = (yf - render->_y_wf[0]) / ys;
 
-	return (int)((1.0f - yr) * (float)(FOSPHOR_FFT_LEN * 1024)) * render->wf_span;
+	return (int)((1.0f - yr) * (float)(self->fft_len * 1024)) * render->wf_span;
 }
 
 int
@@ -351,7 +363,7 @@ int
 fosphor_samp2pos(struct fosphor *self, struct fosphor_render *render, int time)
 {
 	float tf = (float)time;
-	float tr = tf / ((float)(FOSPHOR_FFT_LEN * 1024) * render->wf_span);
+	float tr = tf / ((float)(self->fft_len * 1024) * render->wf_span);
 	float ys = render->_y_wf[1] - render->_y_wf[0] - 1.0f;
 
 	return (int)roundf(render->_y_wf[0] + (1.0f - tr) * ys);
@@ -384,6 +396,51 @@ fosphor_render_pos_inside(struct fosphor_render *render, int x, int y)
 
 	/* Result */
 	return in;
+}
+
+int
+fosphor_fft_len_log_get(void)
+{
+	return g_fosphor_fft_len_log;
+}
+
+int
+fosphor_fft_len_get(void)
+{
+	return g_fosphor_fft_len;
+}
+
+void
+fosphor_fft_len_set(int len)
+{
+	if (fosphor_fft_len_validate(len)) {
+		g_fosphor_fft_len = len;
+		g_fosphor_fft_len_log = 0;
+		int temp = len;
+		while (temp > 1) {
+			temp >>= 1;
+			g_fosphor_fft_len_log++;
+		}
+	}
+}
+
+int
+fosphor_fft_len_validate(int len)
+{
+	/* Basic size validation */
+	if (!(len == 512 || len == 1024 || len == 2048 || 
+	      len == 4096 || len == 8192 || len == 16384 || len == 32768))
+		return 0;
+	
+	/* GPU memory constraint check - sizes > 4096 require too much local memory
+	 * for many GPUs (like NVIDIA GTX 1660 Ti with 48KB limit) */
+	if (len > 4096) {
+		fprintf(stderr, "[w] FFT size %d may not work on all GPUs (memory limit)\n", len);
+		fprintf(stderr, "[w] Consider using 4096 or smaller for better compatibility\n");
+		/* Still allow it - let OpenCL compiler decide */
+	}
+	
+	return 1;
 }
 
 

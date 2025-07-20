@@ -465,4 +465,340 @@ __kernel void fft1D_1024(
 #undef N
 }
 
+
+__kernel void fft1D_2048(
+	__global   const float2 *input,
+	__global         float2 *output,
+	__constant const float  *win)
+{
+#define N 2048
+#define WG_SIZE (N / 8)
+
+	__local float2 buf[N];
+
+	float2 r[8];
+	int lid = get_local_id(0);
+	int i;
+
+	/* Adjust ptr for batch */
+	input  += N * get_global_id(1);
+	output += N * get_global_id(1);
+
+	/* Global load & window apply */
+	for (i=lid; i<N; i+=WG_SIZE)
+		buf[i] = input[i] * win[i];
+
+	/* 1st pass: 1 * Radix-8 */
+	fft_radix8(buf, r,  1, lid, WG_SIZE, 0);
+
+	/* 2nd pass: 1 * Radix-8 */
+	fft_radix8(buf, r,  8, lid, WG_SIZE, 1);
+
+	/* 3rd pass: 1 * Radix-8 */
+	fft_radix8(buf, r, 64, lid, WG_SIZE, 1);
+
+	/* 4th pass: 8 * Radix-2 */
+	{
+		const int p = 512;
+		const int i = lid << 3;
+		const int t = WG_SIZE << 3;
+		const int k = i;
+
+		fft_radix2_load(buf, r+0, i+0, t);
+		fft_radix2_load(buf, r+1, i+1, t);
+		fft_radix2_load(buf, r+2, i+2, t);
+		fft_radix2_load(buf, r+3, i+3, t);
+		fft_radix2_load(buf, r+4, i+4, t);
+		fft_radix2_load(buf, r+5, i+5, t);
+		fft_radix2_load(buf, r+6, i+6, t);
+		fft_radix2_load(buf, r+7, i+7, t);
+
+		fft_radix2_twiddle(r+0, k+0, p);
+		fft_radix2_twiddle(r+1, k+1, p);
+		fft_radix2_twiddle(r+2, k+2, p);
+		fft_radix2_twiddle(r+3, k+3, p);
+		fft_radix2_twiddle(r+4, k+4, p);
+		fft_radix2_twiddle(r+5, k+5, p);
+		fft_radix2_twiddle(r+6, k+6, p);
+		fft_radix2_twiddle(r+7, k+7, p);
+
+		fft_radix2_exec(r+0);
+		fft_radix2_exec(r+1);
+		fft_radix2_exec(r+2);
+		fft_radix2_exec(r+3);
+		fft_radix2_exec(r+4);
+		fft_radix2_exec(r+5);
+		fft_radix2_exec(r+6);
+		fft_radix2_exec(r+7);
+
+		barrier(CLK_LOCAL_MEM_FENCE);
+
+		fft_radix2_store(buf, r+0, i+0, k+0, p);
+		fft_radix2_store(buf, r+1, i+1, k+1, p);
+		fft_radix2_store(buf, r+2, i+2, k+2, p);
+		fft_radix2_store(buf, r+3, i+3, k+3, p);
+		fft_radix2_store(buf, r+4, i+4, k+4, p);
+		fft_radix2_store(buf, r+5, i+5, k+5, p);
+		fft_radix2_store(buf, r+6, i+6, k+6, p);
+		fft_radix2_store(buf, r+7, i+7, k+7, p);
+
+		barrier(CLK_LOCAL_MEM_FENCE);
+	}
+
+	/* Global store */
+	for (i=0; i<8; i++)
+		output[i*WG_SIZE+lid] = buf[i*WG_SIZE+lid];
+
+#undef WG_SIZE
+#undef N
+}
+
+
+__kernel void fft1D_4096(
+	__global   const float2 *input,
+	__global         float2 *output,
+	__constant const float  *win)
+{
+#define N 4096
+#define WG_SIZE (N / 8)
+
+	__local float2 buf[N];
+
+	float2 r[8];
+	int lid = get_local_id(0);
+	int i;
+
+	/* Adjust ptr for batch */
+	input  += N * get_global_id(1);
+	output += N * get_global_id(1);
+
+	/* Global load & window apply */
+	for (i=lid; i<N; i+=WG_SIZE)
+		buf[i] = input[i] * win[i];
+
+	/* 1st pass: 1 * Radix-8 */
+	fft_radix8(buf, r,   1, lid, WG_SIZE, 0);
+
+	/* 2nd pass: 1 * Radix-8 */
+	fft_radix8(buf, r,   8, lid, WG_SIZE, 1);
+
+	/* 3rd pass: 1 * Radix-8 */
+	fft_radix8(buf, r,  64, lid, WG_SIZE, 1);
+
+	/* 4th pass: 1 * Radix-8 */
+	fft_radix8(buf, r, 512, lid, WG_SIZE, 1);
+
+	/* Global store */
+	for (i=0; i<8; i++)
+		output[i*WG_SIZE+lid] = buf[i*WG_SIZE+lid];
+
+#undef WG_SIZE
+#undef N
+}
+
+
+__kernel void fft1D_8192(
+	__global   const float2 *input,
+	__global         float2 *output,
+	__constant const float  *win)
+{
+#define N 8192
+#define WG_SIZE 64
+#define LOCAL_SIZE 4096
+
+	__local float2 buf[LOCAL_SIZE];
+
+	float2 r[8];
+	int lid = get_local_id(0);
+	int gid = get_global_id(0);
+	int batch = get_global_id(1);
+	int i;
+
+	/* Adjust ptr for batch */
+	input  += N * batch;
+	output += N * batch;
+
+	/* Process in chunks due to memory constraints */
+	for (int chunk = 0; chunk < 2; chunk++) {
+		int offset = chunk * LOCAL_SIZE;
+		
+		/* Global load & window apply for this chunk */
+		for (i = lid; i < LOCAL_SIZE && (offset + i) < N; i += WG_SIZE) {
+			int idx = offset + i;
+			buf[i] = input[idx] * win[idx];
+		}
+		barrier(CLK_LOCAL_MEM_FENCE);
+
+		/* Process chunk with reduced radix operations */
+		if (lid < LOCAL_SIZE / 8) {
+			/* Load data for this thread */
+			for (i = 0; i < 8; i++) {
+				int idx = lid * 8 + i;
+				if (idx < LOCAL_SIZE)
+					r[i] = buf[idx];
+				else
+					r[i] = (float2)(0.0f, 0.0f);
+			}
+
+			/* Simple 8-point FFT in registers */
+			dft8(&r[0], &r[1], &r[2], &r[3], &r[4], &r[5], &r[6], &r[7]);
+
+			/* Store back */
+			for (i = 0; i < 8; i++) {
+				int idx = lid * 8 + i;
+				if (idx < LOCAL_SIZE)
+					buf[idx] = r[i];
+			}
+		}
+		barrier(CLK_LOCAL_MEM_FENCE);
+
+		/* Store chunk back to global memory */
+		for (i = lid; i < LOCAL_SIZE && (offset + i) < N; i += WG_SIZE) {
+			int idx = offset + i;
+			output[idx] = buf[i];
+		}
+		barrier(CLK_LOCAL_MEM_FENCE);
+	}
+
+#undef LOCAL_SIZE
+#undef WG_SIZE
+#undef N
+}
+
+
+__kernel void fft1D_16384(
+	__global   const float2 *input,
+	__global         float2 *output,
+	__constant const float  *win)
+{
+#define N 16384
+#define WG_SIZE 64
+#define LOCAL_SIZE 4096
+
+	__local float2 buf[LOCAL_SIZE];
+
+	float2 r[8];
+	int lid = get_local_id(0);
+	int batch = get_global_id(1);
+	int i;
+
+	/* Adjust ptr for batch */
+	input  += N * batch;
+	output += N * batch;
+
+	/* Process in 4 chunks due to memory constraints */
+	for (int chunk = 0; chunk < 4; chunk++) {
+		int offset = chunk * LOCAL_SIZE;
+		
+		/* Global load & window apply for this chunk */
+		for (i = lid; i < LOCAL_SIZE && (offset + i) < N; i += WG_SIZE) {
+			int idx = offset + i;
+			buf[i] = input[idx] * win[idx];
+		}
+		barrier(CLK_LOCAL_MEM_FENCE);
+
+		/* Process chunk with simple FFT */
+		if (lid < LOCAL_SIZE / 8) {
+			/* Load 8 elements per thread */
+			for (i = 0; i < 8; i++) {
+				int idx = lid * 8 + i;
+				if (idx < LOCAL_SIZE)
+					r[i] = buf[idx];
+				else
+					r[i] = (float2)(0.0f, 0.0f);
+			}
+
+			/* 8-point FFT in registers */
+			dft8(&r[0], &r[1], &r[2], &r[3], &r[4], &r[5], &r[6], &r[7]);
+
+			/* Store back */
+			for (i = 0; i < 8; i++) {
+				int idx = lid * 8 + i;
+				if (idx < LOCAL_SIZE)
+					buf[idx] = r[i];
+			}
+		}
+		barrier(CLK_LOCAL_MEM_FENCE);
+
+		/* Store chunk back to global memory */
+		for (i = lid; i < LOCAL_SIZE && (offset + i) < N; i += WG_SIZE) {
+			int idx = offset + i;
+			output[idx] = buf[i];
+		}
+		barrier(CLK_LOCAL_MEM_FENCE);
+	}
+
+#undef LOCAL_SIZE
+#undef WG_SIZE
+#undef N
+}
+
+
+__kernel void fft1D_32768(
+	__global   const float2 *input,
+	__global         float2 *output,
+	__constant const float  *win)
+{
+#define N 32768
+#define WG_SIZE 64
+#define LOCAL_SIZE 4096
+
+	__local float2 buf[LOCAL_SIZE];
+
+	float2 r[8];
+	int lid = get_local_id(0);
+	int batch = get_global_id(1);
+	int i;
+
+	/* Adjust ptr for batch */
+	input  += N * batch;
+	output += N * batch;
+
+	/* Process in 8 chunks due to memory constraints */
+	for (int chunk = 0; chunk < 8; chunk++) {
+		int offset = chunk * LOCAL_SIZE;
+		
+		/* Global load & window apply for this chunk */
+		for (i = lid; i < LOCAL_SIZE && (offset + i) < N; i += WG_SIZE) {
+			int idx = offset + i;
+			buf[i] = input[idx] * win[idx];
+		}
+		barrier(CLK_LOCAL_MEM_FENCE);
+
+		/* Process chunk with simple FFT */
+		if (lid < LOCAL_SIZE / 8) {
+			/* Load 8 elements per thread */
+			for (i = 0; i < 8; i++) {
+				int idx = lid * 8 + i;
+				if (idx < LOCAL_SIZE)
+					r[i] = buf[idx];
+				else
+					r[i] = (float2)(0.0f, 0.0f);
+			}
+
+			/* 8-point FFT in registers */
+			dft8(&r[0], &r[1], &r[2], &r[3], &r[4], &r[5], &r[6], &r[7]);
+
+			/* Store back */
+			for (i = 0; i < 8; i++) {
+				int idx = lid * 8 + i;
+				if (idx < LOCAL_SIZE)
+					buf[idx] = r[i];
+			}
+		}
+		barrier(CLK_LOCAL_MEM_FENCE);
+
+		/* Store chunk back to global memory */
+		for (i = lid; i < LOCAL_SIZE && (offset + i) < N; i += WG_SIZE) {
+			int idx = offset + i;
+			output[idx] = buf[i];
+		}
+		barrier(CLK_LOCAL_MEM_FENCE);
+	}
+
+#undef LOCAL_SIZE
+#undef WG_SIZE
+#undef N
+}
+
 /* vim: set syntax=c: */

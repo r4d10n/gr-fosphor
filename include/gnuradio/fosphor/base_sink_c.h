@@ -56,6 +56,7 @@ namespace gr {
       virtual void set_frequency_span(const double span) = 0;
 
       virtual void set_fft_window(const gr::fft::window::win_type win) = 0;
+      virtual void set_fft_size(const int size) = 0;
     };
 
   } // namespace fosphor

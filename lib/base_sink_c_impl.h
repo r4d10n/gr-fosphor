@@ -59,6 +59,7 @@ namespace gr {
         SETTING_FREQUENCY_RANGE = (1 << 2),
         SETTING_FFT_WINDOW      = (1 << 3),
         SETTING_RENDER_OPTIONS  = (1 << 4),
+        SETTING_FFT_SIZE        = (1 << 5),
       };
 
       uint32_t d_settings_changed;
@@ -88,6 +89,7 @@ namespace gr {
       } d_frequency;
 
       gr::fft::window::win_type d_fft_window;
+      int d_fft_size;
 
      protected:
       base_sink_c_impl();
@@ -116,6 +118,7 @@ namespace gr {
       void set_frequency_span(const double span);
 
       void set_fft_window(const gr::fft::window::win_type win);
+      void set_fft_size(const int size);
 
       /* gr::sync_block implementation */
       int work (int noutput_items,

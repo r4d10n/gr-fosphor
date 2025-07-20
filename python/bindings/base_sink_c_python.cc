@@ -89,5 +89,11 @@ void bind_base_sink_c(py::module& m)
 			D(base_sink_c,set_fft_window)
 		)
 
+		.def("set_fft_size",
+			&base_sink_c::set_fft_size,
+			py::arg("size"),
+			D(base_sink_c,set_fft_size)
+		)
+
 		;
 }

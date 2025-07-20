@@ -52,7 +52,7 @@ base_sink_c_impl::base_sink_c_impl()
   : d_db_ref(0), d_db_per_div_idx(3),
     d_zoom_enabled(false), d_zoom_center(0.5), d_zoom_width(0.2),
     d_ratio(0.35f), d_frozen(false), d_active(false), d_visible(false),
-    d_frequency(), d_fft_window(gr::fft::window::WIN_BLACKMAN_hARRIS)
+    d_frequency(), d_fft_window(gr::fft::window::WIN_BLACKMAN_hARRIS), d_fft_size(1024)
 {
 	/* Init FIFO */
 	this->d_fifo = new fifo(2 * 1024 * 1024);
@@ -130,7 +130,7 @@ void base_sink_c_impl::_worker(base_sink_c_impl *obj)
 void
 base_sink_c_impl::render(void)
 {
-	const int fft_len    = 1024;
+	const int fft_len    = this->d_fft_size;
 	const int batch_mult = 16;
 	const int batch_max  = 1024;
 	const int max_iter   = 8;
@@ -250,7 +250,15 @@ base_sink_c_impl::settings_apply(uint32_t settings)
 
 	if (settings & SETTING_FFT_WINDOW) {
 		std::vector<float> window =
-			gr::fft::window::build(this->d_fft_window, 1024, 6.76);
+			gr::fft::window::build(this->d_fft_window, this->d_fft_size, 6.76);
+		fosphor_set_fft_window(this->d_fosphor, window.data());
+	}
+
+	if (settings & SETTING_FFT_SIZE) {
+		fosphor_fft_len_set(this->d_fft_size);
+		/* Rebuild window with new size */
+		std::vector<float> window =
+			gr::fft::window::build(this->d_fft_window, this->d_fft_size, 6.76);
 		fosphor_set_fft_window(this->d_fosphor, window.data());
 	}
 
@@ -426,6 +434,19 @@ base_sink_c_impl::set_fft_window(const gr::fft::window::win_type win)
 
 	this->d_fft_window = win;
 	this->settings_mark_changed(SETTING_FFT_WINDOW);
+}
+
+void
+base_sink_c_impl::set_fft_size(const int size)
+{
+	if (size == this->d_fft_size)
+		return;
+
+	if (size == 512 || size == 1024 || size == 2048 || 
+	    size == 4096 || size == 8192 || size == 16384 || size == 32768) {
+		this->d_fft_size = size;
+		this->settings_mark_changed(SETTING_FFT_SIZE);
+	}
 }
 
 

@@ -18,11 +18,19 @@
  */
 
 
-#define FOSPHOR_FFT_LEN_LOG	10
-#define FOSPHOR_FFT_LEN		(1<<FOSPHOR_FFT_LEN_LOG)
+#define FOSPHOR_FFT_LEN_LOG_DEFAULT	10
+#define FOSPHOR_FFT_LEN_DEFAULT		(1<<FOSPHOR_FFT_LEN_LOG_DEFAULT)
 
 #define FOSPHOR_FFT_MULT_BATCH	16
 #define FOSPHOR_FFT_MAX_BATCH	1024
+
+#define FOSPHOR_FFT_LEN_LOG	fosphor_fft_len_log_get()
+#define FOSPHOR_FFT_LEN		fosphor_fft_len_get()
+
+int fosphor_fft_len_log_get(void);
+int fosphor_fft_len_get(void);
+void fosphor_fft_len_set(int len);
+int fosphor_fft_len_validate(int len);
 
 struct fosphor_cl_state;
 struct fosphor_gl_state;
@@ -35,7 +43,8 @@ struct fosphor
 #define FLG_FOSPHOR_USE_CLGL_SHARING	(1<<0)
 	int flags;
 
-	float fft_win[FOSPHOR_FFT_LEN];
+	float *fft_win;
+	int fft_len;
 
 	float *img_waterfall;
 	float *img_histogram;

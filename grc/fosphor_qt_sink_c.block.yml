@@ -9,6 +9,13 @@ parameters:
     options: [window.WIN_BLACKMAN_hARRIS, window.WIN_HAMMING, window.WIN_HANN, window.WIN_BLACKMAN, window.WIN_RECTANGULAR, window.WIN_KAISER, window.WIN_FLATTOP]
     option_labels: [Blackman-harris, Hamming, Hann, Blackman, Rectangular, Kaiser, Flat-top]
     hide: part
+-   id: fft_size
+    label: FFT Size
+    dtype: enum
+    default: '1024'
+    options: ['512', '1024', '2048', '4096', '8192', '16384', '32768']
+    option_labels: [512, 1024, 2048, 4096, 8192, 16384, 32768]
+    hide: none
 -   id: freq_center
     label: Center Frequency (Hz)
     dtype: real
@@ -43,11 +50,13 @@ templates:
         %>\
         fosphor.qt_sink_c()
         self.${id}.set_fft_window(${wintype})
+        self.${id}.set_fft_size(${fft_size})
         self.${id}.set_frequency_range(${freq_center}, ${freq_span})
         ${win} = sip.wrapinstance(self.${id}.pyqwidget(), Qt.QWidget)
         ${gui_hint() % win}
     callbacks:
     - set_fft_window(${wintype})
+    - set_fft_size(${fft_size})
     - set_frequency_range(${freq_center}, ${freq_span})
 
 documentation: |-
